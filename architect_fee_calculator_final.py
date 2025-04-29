@@ -132,7 +132,8 @@ def create_pdf(summary_df, schedule_df):
     
     pdf_output = BytesIO()
     pdf.output(pdf_output)
-    return pdf_output.getvalue()
+    pdf_output.seek(0)
+    return pdf_output
 
 pdf_bytes = create_pdf(df_summary, df_schedule)
 
