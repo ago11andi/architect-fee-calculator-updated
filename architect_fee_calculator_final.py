@@ -130,10 +130,8 @@ def create_pdf(summary_df, schedule_df):
         pdf.cell(60, 7, f"{row['Start']} to {row['End']}", 0)
         pdf.cell(40, 7, f"{row['Duration (days)']} days", ln=True)
     
-    pdf_output = BytesIO()
-    pdf.output(pdf_output)
-    pdf_output.seek(0)
-    return pdf_output
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    return BytesIO(pdf_bytes)
 
 pdf_bytes = create_pdf(df_summary, df_schedule)
 
