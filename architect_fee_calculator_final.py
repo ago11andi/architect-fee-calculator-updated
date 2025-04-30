@@ -5,139 +5,170 @@ from datetime import date
 from io import BytesIO
 import plotly.express as px
 from fpdf import FPDF
+from PIL import Image
+import os
 
-st.set_page_config(layout="wide")
-st.title("🏗️ Architect Fee Calculator with Schedule, Consultants & PDF Export")
+st.set_page_config(page_title="Architect Fee Tool – aperioddesign",
+                   page_icon="🅰️", layout="wide")
 
-# --- Project Info ---
+# Load logo
+LOGO_PATH = "logo.png"
+if os.path.exists(LOGO_PATH):
+    st.image(Image.open(LOGO_PATH), width=140)
+
+st.title("🏗️ Architect Fee Calculator  |  aperioddesign.com")
+
+# --- Project Info
 st.header("1. Project Info")
-construction_cost = st.number_input("Estimated Construction Cost ($)", min_value=0, value=1_000_000)
-base_fee_percent = st.number_input("Base Fee % of Construction Cost", min_value=0.0, value=0.08)
-complexity_factor = st.number_input("Complexity Factor", min_value=0.5, value=1.1)
-location_factor = st.number_input("Location Factor", min_value=0.5, value=1.0)
-risk_factor = st.number_input("Risk Factor", min_value=0.5, value=1.05)
-firm_multiplier = st.number_input("Firm Multiplier (Overhead + Profit)", min_value=1.0, value=3.0)
+construction_cost = st.number_input("Estimated Construction Cost ($)", min_value=0.0, value=1_000_000.0, step=10000.0)
+base_fee_percent = st.number_input("Base Fee % of Construction Cost", min_value=0.0, max_value=1.0, value=0.08, step=0.01)
+complexity_factor = st.number_input("Complexity Factor", min_value=0.5, value=1.1, step=0.05)
+location_factor   = st.number_input("Location Factor",   min_value=0.5, value=1.0, step=0.05)
+risk_factor       = st.number_input("Risk Factor",       min_value=0.5, value=1.05, step=0.05)
+firm_multiplier   = st.number_input("Firm Multiplier (OH + Profit)", min_value=1.0, value=3.0, step=0.1)
 
-# --- Hourly Rates ---
+# --- Hourly Rates
 st.header("2. Hourly Rates ($)")
 roles = ["Principal", "Project Manager", "Architect", "Drafter"]
-rates = {role: st.number_input(f"{role}", value=rate) for role, rate in zip(roles, [200, 150, 100, 75])}
+defaults = [200, 150, 100, 75]
+rates = {r: st.number_input(r, value=d, step=10) for r, d in zip(roles, defaults)}
 
-# --- Hours per Phase ---
+# --- Hours per Phase
 st.header("3. Estimated Hours per Phase")
 phases = ['Pre-Design', 'Schematic Design', 'Design Development',
           'Construction Documents', 'Bidding/Negotiation', 'Construction Administration']
 hours_data = {}
-for phase in phases:
-    with st.expander(phase, expanded=False):
-        hours_data[phase] = {role: st.number_input(f"{phase} - {role}", min_value=0, value=10) for role in roles}
+for p in phases:
+    with st.expander(p, expanded=False):
+        hours_data[p] = {r: st.number_input(f"{p} – {r}", min_value=0, value=10, step=1) for r in roles}
 
-# --- Consultant Fees ---
-st.header("4. Consultants")
-st.markdown("*(as a % of construction cost)*")
-consultants = {
-    "Structural Engineer": st.number_input("Structural Engineer (%)", value=1.5),
-    "MEP Engineer": st.number_input("MEP Engineer (%)", value=2.0),
-    "Civil Engineer": st.number_input("Civil Engineer (%)", value=1.0),
-    "Landscape Architect": st.number_input("Landscape Architect (%)", value=0.5),
+# --- Consultants
+st.header("4. Consultant Percentages")
+consultant_percent = {
+    "Structural Engineer": st.number_input("Structural Engineer (%)", value=1.5, step=0.1),
+    "MEP Engineer": st.number_input("MEP Engineer (%)", value=2.0, step=0.1),
+    "Civil Engineer": st.number_input("Civil Engineer (%)", value=1.0, step=0.1),
+    "Landscape Architect": st.number_input("Landscape Architect (%)", value=0.5, step=0.1)
 }
-consultant_fees = {k: construction_cost * (v / 100) for k, v in consultants.items()}
+consultant_fees = {k: construction_cost * v/100 for k, v in consultant_percent.items()}
 
-# --- Schedule Tracking ---
+# --- Schedule
 st.header("5. Schedule Tracker")
-schedule_data = []
-for phase in phases:
-    col1, col2 = st.columns(2)
-    with col1:
-        start = st.date_input(f"{phase} Start", value=date.today(), key=f"{phase}_start")
-    with col2:
-        end = st.date_input(f"{phase} End", value=date.today(), key=f"{phase}_end")
-    duration = (end - start).days
-    schedule_data.append({"Phase": phase, "Start": start, "End": end, "Duration (days)": duration})
+schedule_rows = []
+for p in phases:
+    c1, c2 = st.columns(2)
+    start = c1.date_input(f"{p} Start", date.today(), key=f"{p}_start")
+    end   = c2.date_input(f"{p} End", date.today(), key=f"{p}_end")
+    schedule_rows.append({"Phase": p, "Start": start, "End": end, "Duration (days)": (end-start).days})
+df_schedule = pd.DataFrame(schedule_rows)
 
-df_schedule = pd.DataFrame(schedule_data)
+# --- Calculations
+total_raw = sum(hours_data[p][r]*rates[r] for p in phases for r in roles)
+workplan_fee = total_raw * firm_multiplier
+pct_adj = base_fee_percent*complexity_factor*location_factor*risk_factor
+pct_fee = construction_cost * pct_adj
 
-# --- Fee Calculations ---
-total_raw_labor_cost = sum(hours_data[phase][role] * rates[role] for phase in phases for role in roles)
-workplan_fee = total_raw_labor_cost * firm_multiplier
-adjusted_fee_percent = base_fee_percent * complexity_factor * location_factor * risk_factor
-construction_fee = construction_cost * adjusted_fee_percent
+df_summary = pd.DataFrame({
+    "Metric": ["Total Raw Labor", "Workplan Fee", "%-of-Cost Fee"],
+    "Amount ($)": [total_raw, workplan_fee, pct_fee]
+})
 
-# --- Fee Summary ---
-st.header("6. Fee Summary")
-st.write(f"**Total Raw Labor Cost:** ${total_raw_labor_cost:,.2f}")
-st.write(f"**Workplan Method Fee:** ${workplan_fee:,.2f}")
-st.write(f"**Construction Cost % Method Fee:** ${construction_fee:,.2f}")
-st.write("### Consultant Cost Estimates")
-for k, v in consultant_fees.items():
-    st.write(f"{k}: ${v:,.2f}")
+# --- PDF creation
+def build_pdf():
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    # logo
+    if os.path.exists(LOGO_PATH):
+        try:
+            pdf.image(LOGO_PATH, x=10, y=8, w=40)
+        except RuntimeError:
+            pass
+    pdf.ln(22)
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Architect Fee Calculator Report", ln=True, align="C")
+    pdf.ln(3)
 
-# --- Gantt-style Chart ---
-st.subheader("📊 Project Schedule Timeline")
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0,8,"Project Information",ln=True)
+    pdf.set_font("Arial","",10)
+    for label, val in [
+        ("Construction Cost", f"${construction_cost:,.0f}"),
+        ("Base Fee %", f"{base_fee_percent*100:.2f}%"),
+        ("Complexity Factor", complexity_factor),
+        ("Location Factor", location_factor),
+        ("Risk Factor", risk_factor),
+        ("Firm Multiplier", firm_multiplier)
+    ]:
+        pdf.cell(60,6,f"{label}:",0)
+        pdf.cell(40,6,str(val),ln=True)
+
+    pdf.ln(3)
+    pdf.set_font("Arial","B",12)
+    pdf.cell(0,8,"Hourly Rates",ln=True)
+    pdf.set_font("Arial","",10)
+    for r in roles:
+        pdf.cell(60,6,f"{r}:",0)
+        pdf.cell(40,6,f"${rates[r]:,.2f}",ln=True)
+
+    pdf.ln(3)
+    pdf.set_font("Arial","B",12)
+    pdf.cell(0,8,"Hours per Phase",ln=True)
+    pdf.set_font("Arial","",8)
+    pdf.cell(35,6,"Phase",1)
+    for r in roles:
+        pdf.cell(25,6,r.split()[0],1)
+    pdf.ln()
+    for p in phases:
+        pdf.cell(35,6,p,1)
+        for r in roles:
+            pdf.cell(25,6,str(hours_data[p][r]),1)
+        pdf.ln()
+
+    pdf.ln(3)
+    pdf.set_font("Arial","B",12)
+    pdf.cell(0,8,"Fee Summary",ln=True)
+    pdf.set_font("Arial","",10)
+    for _,row in df_summary.iterrows():
+        pdf.cell(60,6,f"{row['Metric']}:",0)
+        pdf.cell(40,6,f"${row['Amount ($)']:,.2f}",ln=True)
+
+    pdf.ln(3)
+    pdf.set_font("Arial","B",12)
+    pdf.cell(0,8,"Consultant Fees",ln=True)
+    pdf.set_font("Arial","",10)
+    for k,v in consultant_fees.items():
+        pdf.cell(70,6,f"{k}:",0)
+        pdf.cell(40,6,f"${v:,.2f}",ln=True)
+
+    pdf.add_page()
+    pdf.set_font("Arial","B",12)
+    pdf.cell(0,8,"Project Schedule",ln=True)
+    pdf.set_font("Arial","",9)
+    pdf.cell(60,6,"Phase",1)
+    pdf.cell(35,6,"Start",1)
+    pdf.cell(35,6,"End",1)
+    pdf.cell(25,6,"Days",1)
+    pdf.ln()
+    for _,row in df_schedule.iterrows():
+        pdf.cell(60,6,row["Phase"],1)
+        pdf.cell(35,6,row["Start"].strftime("%Y-%m-%d"),1)
+        pdf.cell(35,6,row["End"].strftime("%Y-%m-%d"),1)
+        pdf.cell(25,6,str(row["Duration (days)"]),1)
+        pdf.ln()
+
+    pdf.set_y(-15)
+    pdf.set_font("Arial","I",8)
+    pdf.cell(0,8,"aperioddesign.com",0,0,"C")
+    return BytesIO(pdf.output(dest="S").encode("latin1"))
+
+pdf_bytes = build_pdf()
+st.download_button("📄 Download Branded PDF", data=pdf_bytes,
+                   file_name="aperioddesign_fee_report.pdf",
+                   mime="application/pdf")
+
+# timeline
+st.header("6. Schedule Timeline")
 fig = px.timeline(df_schedule, x_start="Start", x_end="End", y="Phase")
 fig.update_yaxes(autorange="reversed")
 st.plotly_chart(fig, use_container_width=True)
-
-# --- Download CSVs ---
-st.header("7. Download Reports")
-
-summary_data = {
-    "Workplan Method Fee": [workplan_fee],
-    "Construction % Method Fee": [construction_fee],
-    "Total Labor Cost": [total_raw_labor_cost],
-}
-summary_data.update({f"{k} (Consultant)": [v] for k, v in consultant_fees.items()})
-df_summary = pd.DataFrame(summary_data)
-
-def convert_df_to_csv(df):
-    return df.to_csv(index=False).encode("utf-8")
-
-st.download_button(
-    "📥 Download Fee Summary (CSV)",
-    data=convert_df_to_csv(df_summary),
-    file_name='architect_fee_summary.csv',
-    mime='text/csv',
-)
-
-st.download_button(
-    "📥 Download Project Schedule (CSV)",
-    data=convert_df_to_csv(df_schedule),
-    file_name='project_schedule.csv',
-    mime='text/csv',
-)
-
-# --- PDF Report Generator ---
-st.subheader("🧾 Export Fee Report as PDF")
-def create_pdf(summary_df, schedule_df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(200, 10, "Architect Fee Summary Report", ln=True, align="C")
-
-    pdf.set_font("Arial", "", 10)
-    pdf.ln(5)
-    for col in summary_df.columns:
-        pdf.cell(60, 8, f"{col}:", 0)
-        pdf.cell(60, 8, f"${summary_df[col][0]:,.2f}", ln=True)
-
-    pdf.ln(10)
-    pdf.set_font("Arial", "B", 11)
-    pdf.cell(200, 10, "Project Schedule", ln=True)
-
-    pdf.set_font("Arial", "", 9)
-    for _, row in schedule_df.iterrows():
-        pdf.cell(60, 7, f"{row['Phase']}", 0)
-        pdf.cell(60, 7, f"{row['Start']} to {row['End']}", 0)
-        pdf.cell(40, 7, f"{row['Duration (days)']} days", ln=True)
-    
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    return BytesIO(pdf_bytes)
-
-pdf_bytes = create_pdf(df_summary, df_schedule)
-
-st.download_button(
-    label="📄 Download PDF Report",
-    data=pdf_bytes,
-    file_name="architect_fee_report.pdf",
-    mime="application/pdf",
-)
